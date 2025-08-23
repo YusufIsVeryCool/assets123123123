@@ -25,6 +25,80 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 * OTHER DEALINGS IN THE SOFTWARE.
 */
+<script>
+(() => {
+  // Helper: set crossorigin before any src is set
+  const forceAnonymous = (img) => {
+    try {
+      // Set both property and attribute for widest compatibility
+      img.crossOrigin = 'anonymous';
+      if (!img.hasAttribute('crossorigin')) {
+        img.setAttribute('crossorigin', 'anonymous');
+      }
+    } catch (_) {}
+    return img;
+  };
+
+  // --- Patch window.Image constructor ---
+  const OriginalImage = window.Image;
+  function PatchedImage(width, height) {
+    // Support both 0/2-arg forms
+    const img = new OriginalImage(width, height);
+    return forceAnonymous(img);
+  }
+  // Preserve prototype chain/identity
+  Object.setPrototypeOf(PatchedImage, OriginalImage);
+  PatchedImage.prototype = OriginalImage.prototype;
+  window.Image = PatchedImage;
+
+  // --- Patch document.createElement('img') ---
+  const origCreateElement = Document.prototype.createElement;
+  Document.prototype.createElement = function(name, options) {
+    const el = origCreateElement.call(this, name, options);
+    if (String(name).toLowerCase() === 'img') {
+      forceAnonymous(el);
+    }
+    return el;
+  };
+
+  // --- Ensure late-added <img> nodes also get patched (e.g., innerHTML, frameworks) ---
+  const mo = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node && node.nodeType === 1) { // ELEMENT_NODE
+          if (node.tagName === 'IMG') {
+            forceAnonymous(node);
+          }
+          // Also check any nested <img> elements
+          const imgs = node.querySelectorAll && node.querySelectorAll('img');
+          if (imgs && imgs.length) {
+            imgs.forEach(forceAnonymous);
+          }
+        }
+      }
+    }
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+
+  // --- Optional: ensure crossOrigin is set before any src assignment ---
+  // Some code sets src immediately; this ensures we set crossOrigin first if missing.
+  const desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+  if (desc && desc.set && desc.get) {
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: desc.get,
+      set: function(v) {
+        if (!this.crossOrigin) {
+          // Only force if not explicitly set
+          forceAnonymous(this);
+        }
+        return desc.set.call(this, v);
+      }
+    });
+  }
+})();
+</script>
 
 
 //##############################################################################
